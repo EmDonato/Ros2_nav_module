@@ -1,0 +1,23 @@
+services:
+  navigation:
+    image: robot-modules/navigation:jazzy
+    platform: ${ROBOT_PLATFORM:-linux/arm64}
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 30s
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    environment:
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_LOCALHOST_ONLY: "0"
+    volumes:
+      - ./config:/ws/config:ro
+    command:
+      - ros2
+      - launch
+      - navigation_bringup
+      - navigation.launch.py
+      - config_file:=/ws/config/navigation.yaml
