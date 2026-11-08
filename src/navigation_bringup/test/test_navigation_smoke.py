@@ -26,6 +26,7 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
     from rclpy.action import ActionClient
     from rclpy.context import Context
     from rclpy.node import Node
+    from rclpy.executors import SingleThreadedExecutor
     from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
     from sensor_msgs.msg import LaserScan
     from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
@@ -35,13 +36,19 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
     # Keep synthetic commands and TF in a dedicated local domain and namespace.
     monkeypatch.setenv("ROS_DOMAIN_ID", "213")
     monkeypatch.setenv("ROS_LOCALHOST_ONLY", "1")
-    monkeypatch.setenv("RMW_IMPLEMENTATION", "rmw_cyclonedds_cpp")
     monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
     namespace = f"navigation_smoke_{os.getpid()}"
     document = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     document["navigation_bringup"]["ros__parameters"].update(
         namespace=namespace, cmd_vel_topic="commands/nav"
     )
+    # Costmaps add their own child namespaces: bind inputs explicitly to the
+    # private test namespace, rather than resolving map/scan beneath each costmap.
+    for name in ('controller_server', 'bt_navigator', 'velocity_smoother'):
+        document[name]['ros__parameters']['odom_topic'] = f'/{namespace}/odom'
+    for name in ('local_costmap', 'global_costmap'):
+        document[name][name]['ros__parameters']['obstacle_layer']['scan']['topic'] = f'/{namespace}/scan'
+    document['global_costmap']['global_costmap']['ros__parameters']['static_layer']['map_topic'] = f'/{namespace}/map'
     config = tmp_path / "navigation.yaml"
     config.write_text(yaml.safe_dump(document), encoding="utf-8")
 
@@ -51,6 +58,8 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
         "synthetic_inputs", context=context, namespace=namespace,
         cli_args=["--ros-args", "-r", "/tf:=tf", "-r", "/tf_static:=tf_static"],
     )
+    executor = SingleThreadedExecutor(context=context)
+    executor.add_node(node)
     log_path = tmp_path / "bringup.log"
     process = None
     try:
@@ -122,7 +131,7 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     assert process.poll() is None, log_path.read_text(encoding="utf-8")
-                    rclpy.spin_once(node, timeout_sec=0.05)
+                    executor.spin_once(timeout_sec=0.05)
                     if predicate():
                         return
                 pytest.fail(
@@ -131,7 +140,7 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
 
             clients = {
                 name: node.create_client(GetState, f"{name}/get_state")
-                for name, _, _ in navigation.SERVERS
+                for name, _, _ in navigation.NAV2_SERVERS
             }
             requests = {}
 
@@ -169,7 +178,7 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
             assert plan_request.result().accepted
             plan_result = plan_request.result().get_result_async()
             wait_for(plan_result.done, "planned path")
-            assert plan_result.result().status == GoalStatus.STATUS_SUCCEEDED
+            assert plan_result.result().status == GoalStatus.STATUS_SUCCEEDED, log_path.read_text(encoding="utf-8")
             assert len(plan_result.result().result.path.poses) > 1
 
             navigator = ActionClient(node, NavigateToPose, "navigate_to_pose")
@@ -181,7 +190,7 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
             handle = request.result()
             assert handle.accepted
             wait_for(
-                lambda: any(abs(v) > 0.001 for command in commands for v in command), "Twist output"
+                lambda: any(x >= 0.03 for x, _ in commands), "forward velocity at or above 0.03 m/s"
             )
             publishers = node.get_publishers_info_by_topic(f"/{namespace}/commands/nav")
             assert publishers and all(p.topic_type == "geometry_msgs/msg/Twist" for p in publishers)
@@ -204,5 +213,6 @@ def test_synthetic_navigation(tmp_path, monkeypatch):
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
+        executor.shutdown()
         node.destroy_node()
         context.shutdown()

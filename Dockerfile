@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-ament-index-python \
     ros-jazzy-launch-ros \
     ros-jazzy-rmw-cyclonedds-cpp \
+    ros-jazzy-nav2-smac-planner \
     ros-jazzy-nav2-common \
     ros-jazzy-nav2-controller \
     ros-jazzy-nav2-costmap-2d \

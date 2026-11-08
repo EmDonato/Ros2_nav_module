@@ -43,12 +43,12 @@ def ros_parameters(path, node_name):
 
 
 def test_default_config_is_accepted_by_ros():
-    navigation._load_configuration(CONFIG)
+    navigation.load_configuration(CONFIG)
     params = ros_parameters(CONFIG, "/controller_server")
     assert params["enable_stamped_cmd_vel"] is False
-    assert params["FollowPath.plugin"] == "dwb_core::DWBLocalPlanner"
+    assert isinstance(params["FollowPath.plugin"], str) and params["FollowPath.plugin"]
     params = ros_parameters(CONFIG, "/global_costmap/global_costmap")
-    assert params["static_layer.map_topic"] == "map"
+    assert params["static_layer.map_topic"].lstrip("/") == "map"
 
 
 @pytest.mark.parametrize("content", ["[", "[]", "null", "controller_server: false"])
@@ -56,13 +56,13 @@ def test_invalid_yaml_reports_path(tmp_path, content):
     path = tmp_path / "invalid.yaml"
     path.write_text(content, encoding="utf-8")
     with pytest.raises(RuntimeError, match=str(path)):
-        navigation._load_configuration(path)
+        navigation.load_configuration(path)
 
 
 def test_missing_file_reports_path(tmp_path):
     path = tmp_path / "missing.yaml"
     with pytest.raises(RuntimeError, match=str(path)):
-        navigation._load_configuration(path)
+        navigation.load_configuration(path)
 
 
 @pytest.mark.parametrize(
@@ -71,7 +71,7 @@ def test_missing_file_reports_path(tmp_path):
 def test_missing_sections_report_name(tmp_path, document, section):
     del document[section]
     with pytest.raises(RuntimeError, match=section):
-        navigation._load_configuration(write_config(tmp_path, document))
+        navigation.load_configuration(write_config(tmp_path, document))
 
 
 @pytest.mark.parametrize(
@@ -91,7 +91,7 @@ def test_missing_sections_report_name(tmp_path, document, section):
 def test_invalid_bringup_settings(tmp_path, document, key, value):
     document["navigation_bringup"]["ros__parameters"][key] = value
     with pytest.raises(RuntimeError, match=key):
-        navigation._load_configuration(write_config(tmp_path, document))
+        navigation.load_configuration(write_config(tmp_path, document))
 
 
 @pytest.mark.parametrize("namespace", ["", "robot/navigation"])

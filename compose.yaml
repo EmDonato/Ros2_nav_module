@@ -15,7 +15,7 @@ services:
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
       ROS_LOCALHOST_ONLY: "0"
     volumes:
-      - ./config:/ws/config:ro
+      - ${PIROBOT_NAV_CONFIG:-./config/navigation.yaml}:/ws/config/navigation.yaml:ro
     command:
       - ros2
       - launch

@@ -52,11 +52,31 @@ All three command-producing/consuming nodes explicitly use unstamped `Twist`.
 When changing to `TwistStamped`, set `enable_stamped_cmd_vel` consistently in
 `controller_server`, `behavior_server` and `velocity_smoother`.
 
-The robot project owns command arbitration, motor control and stop handling.
-In particular, the existing teleoperation output is `TwistStamped`; connecting
-both command sources requires an explicit type-compatible arbitration path.
-The EKF's configured command input is `cmd_vel/accepted`, which should receive
-the commands actually accepted by that path.
+The module also installs `velocity_mux`, an optional standalone command arbiter:
+
+```bash
+ros2 run navigation_bringup velocity_mux --ros-args \
+  -r navigation:=/cmd_vel/navigation -r manual:=/cmd_vel/joystick_stamped \
+  -r joy:=/joy -r output:=/cmd_vel/raw
+```
+
+`navigation` takes physical `Twist`, `manual` takes physical `TwistStamped`,
+and `output` publishes physical `TwistStamped`. Input subscriptions use best-effort,
+volatile, keep-last 10, accepting both reliable and best-effort publishers. Output
+uses reliable, volatile, keep-last 10. Never feed normalized joystick axes here.
+With `manual_mode: joystick`, the configured `enable_button` (default 9) grants
+manual priority while Joy messages remain fresh, even with centered sticks.
+Release or a missing joystick returns control to fresh Nav2 commands. Missing
+commands from all sources produce zero. With the button held but stale manual
+velocity, output stays zero instead of allowing autonomous movement.
+`manual_mode: keyboard` grants priority while moving, then releases after `timeout`;
+idle zero messages do not block navigation. `manual_mode: none` selects Nav2 only.
+Timeouts use a monotonic clock. `selected_source` reports manual/navigation/stop.
+This module's bringup starts the arbiter when `command_mux.ros__parameters.enabled`
+is true. The simulation workspace enables it through a temporary config and wires
+`/cmd_vel/raw` through its stamped-to-Twist adapter.
+The downstream motor layer still owns acceptance, limits and arming, and publishes
+`cmd_vel/accepted` for the EKF.
 
 ## One configuration file
 
@@ -83,9 +103,9 @@ produce errors that identify the configuration path and affected setting.
 
 | Subsystem | Initial plugins |
 | --- | --- |
-| Global planner | `nav2_navfn_planner::NavfnPlanner` |
+| Global planner | `nav2_smac_planner::SmacPlanner2D` |
 | Local controller | `dwb_core::DWBLocalPlanner`, explicit DWB critics |
-| Progress / goal checking | `SimpleProgressChecker` / `SimpleGoalChecker` |
+| Progress / goal checking | `PoseProgressChecker` / `SimpleGoalChecker` |
 | Path smoothing | `nav2_smoother::SimpleSmoother` |
 | Global costmap | StaticLayer, ObstacleLayer, InflationLayer |
 | Local rolling costmap | ObstacleLayer, InflationLayer |
@@ -97,9 +117,9 @@ custom BT XML paths can be supplied through the navigator's standard parameters.
 A different plugin must also be installed in the image and declared in
 `package.xml`; changing the YAML does not install software.
 
-Initial differential-drive examples use a 0.22 m radius, 0.2 m/s forward speed,
-0.8 rad/s angular speed, 0.5 m/s² linear acceleration, and 1.0 rad/s² angular
-acceleration. These are example values, not measured limits. Update both
+The differential-drive configuration uses a 0.10 m radius, 0.15 m/s forward speed,
+0.5 rad/s path-following angular speed, 0.5 m/s² linear acceleration, and 1.0 rad/s²
+angular acceleration. These are example values, not measured limits. Update both
 costmap footprints and keep controller, behavior and velocity-smoother limits
 consistent with the actual robot. Distances are meters, angles radians, rates
 Hz and time seconds unless marked otherwise in the YAML.
@@ -230,3 +250,23 @@ and TF inputs before connecting motor control. Physical validation must then
 check footprint/limits, obstacle response, goal completion and cancellation,
 and DDS data delivery between the actual Humble and Jazzy containers. Successful
 static checks or image builds do not establish those hardware properties.
+
+Clock selection: set `use_sim_time` in this module’s ROS parameter YAML.
+For standalone use, `false` uses the system clock and `true` subscribes to `/clock`.
+When launched by Open-PiRobot_simulation, `config/simulation.yaml` →
+`runtime.use_sim_time` overrides module YAML values; `null` preserves them.
+
+`command_mux.ros__parameters.enabled` controls the optional arbiter in this module's
+bringup. When enabled, the velocity smoother publishes to `navigation_topic` and
+the arbiter uses the configured manual, Joy and output topics. It is not a lifecycle
+node and is not included in the lifecycle manager's node list. The simulation
+workspace enables it through `parameter_overrides`; standalone Nav2 leaves it disabled.
+The launch contains ROS actions only; YAML validation is in the package's
+`configuration.py`. Costmap `width` and `height` use integer metres as required by Jazzy.
+
+The simulation tuning uses a 0.10 m circular robot radius (zero footprint padding)
+and a 0.15 m inflation radius, giving a 0.05 m clearance beyond the robot radius.
+Path following uses DWB with zero lateral motion and forward-only linear
+velocity sampling. The velocity smoother has no configured deadband.
+The navigation smoke test now requires forward velocity >= 0.03 m/s and checks
+that cancellation produces zero, instead of accepting any nonzero rotation.
