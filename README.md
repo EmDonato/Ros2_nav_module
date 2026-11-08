@@ -2,8 +2,8 @@
 
 This independent module runs Nav2 on ROS 2 Jazzy / Ubuntu 24.04 using Cyclone
 DDS. It supports Raspberry Pi 5 (`linux/arm64`) and x86-64 development hosts.
-The other modules in this collection remain on Humble; cross-distribution
-communication must be tested before deploying the combined system.
+The containing robot project provides matching Jazzy drivers, localization and
+command routing; this module does not start those components.
 
 ## Structure
 
